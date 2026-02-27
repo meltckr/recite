@@ -266,6 +266,7 @@ async function api(method, action, data = null) {
         return {
           id: `${newId}_${index}`,
           text: l.text || '',
+          pronunciation: l.pronunciation || '',
           translation: l.translation || '',
           interval: 0,
           repetitions: 0,
@@ -486,6 +487,40 @@ function setScreen(html) {
 }
 
 // ============================================================
+// PRE-LOAD: Seven-Line Prayer
+// ============================================================
+
+async function maybePreloadSevenLinePrayer() {
+  try {
+    const texts = await api('GET', 'getTexts');
+    if (texts.length > 0) return; // Already has data
+
+    const lines = [
+      { text: "HUNG", pronunciation: "Er Hoong", translation: "" },
+      { text: "Ogyen yulgyi nupchang tsam", pronunciation: "Uh-gen yool-gyi noob-chang tsam", translation: "In the north-west of the country of Uddiyana," },
+      { text: "Pema kesar dongpo la", pronunciation: "Pay-ma kay-sar dong-po la", translation: "In the heart of a lotus flower," },
+      { text: "Yamtsen chokgi ngodrup nye", pronunciation: "Yam-tsen chok-gi ngeu-drup nyeh", translation: "You are endowed with the supreme, wondrous siddhis," },
+      { text: "Pema jungne shyesu drak", pronunciation: "Pay-ma Jung-neh shyeh-soo drak", translation: "And are renowned as the Lotus Born." },
+      { text: "Khordu khandro mangpo kor", pronunciation: "Khor-doo khan-dro mang-peu kor", translation: "Surrounded by a host of many dakinis" },
+      { text: "Chyechyi jesu dagdrup kyi", pronunciation: "Chyeh-chyi jeh-soo dak-drup kyee", translation: "I will practice by following your example." },
+      { text: "Chingyi lapchir sheksu sol", pronunciation: "Ching-yee lap-cheer shek-soo sol", translation: "Please approach and grant your blessings!" },
+      { text: "GURU PEMA SIDDHI HUNG", pronunciation: "Guru Pay-ma Siddhi Hoong", translation: "" },
+      { text: "OM AH HUNG BENZAR GURU PEMA SIDDHI HUNG", pronunciation: "Om Ah Hoong Ben-zar Guru Pay-ma Sidd-hi Hoong", translation: "May the blessings of the Lotus-Born Guru bring spiritual accomplishment." },
+      { text: "OM AH HUNG BENZAR GURU PEMA THOTRENG TSAL", pronunciation: "Om Ah Hoong Ben-zar Guru Pay-ma Tho-treng Tsal", translation: "Melody of Thotreng Tsal" },
+      { text: "BENZAR SAMAYA DZA SIDDHI PHALA HUNG AH", pronunciation: "Ben-zar Sa-ma-ya Dza Sidd-hi Pa-la Hoong Ah", translation: "" }
+    ];
+
+    await api('POST', 'addText', {
+      title: "Seven-Line Prayer & Vajra Guru Mantra",
+      category: "Prayer",
+      lines
+    });
+  } catch (e) {
+    console.warn('Pre-load failed:', e);
+  }
+}
+
+// ============================================================
 // HOME SCREEN
 // ============================================================
 
@@ -651,6 +686,16 @@ function renderAdd() {
           <div class="preview-lines" id="preview-lines"></div>
         </div>
 
+        <div class="pronunciation-section" id="pronunciation-section" style="display:none">
+          <button class="pronunciation-toggle" onclick="togglePronunciationSection()" id="pron-toggle">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" id="pron-toggle-icon">
+              <polyline points="9 18 15 12 9 6"/>
+            </svg>
+            Add Pronunciations (optional)
+          </button>
+          <div class="pronunciation-inputs" id="pronunciation-inputs" style="display:none"></div>
+        </div>
+
         <button class="save-btn" id="save-btn" onclick="saveText()" disabled>Save Text</button>
       </div>
     </div>
@@ -666,12 +711,25 @@ function renderAdd() {
     });
   };
 
+  window.togglePronunciationSection = () => {
+    const inputs = $('#pronunciation-inputs');
+    const icon = $('#pron-toggle-icon');
+    if (!inputs) return;
+    const isOpen = inputs.style.display !== 'none';
+    inputs.style.display = isOpen ? 'none' : '';
+    if (icon) {
+      icon.style.transform = isOpen ? '' : 'rotate(90deg)';
+    }
+  };
+
   window.updatePreview = () => {
     const text = $('#add-text')?.value || '';
     const lines = text.split('\n').filter(l => l.trim());
     const previewSection = $('#preview-section');
     const previewLines = $('#preview-lines');
     const saveBtn = $('#save-btn');
+    const pronSection = $('#pronunciation-section');
+    const pronInputs = $('#pronunciation-inputs');
 
     if (!previewSection || !previewLines) return;
 
@@ -683,8 +741,28 @@ function renderAdd() {
           <span class="preview-text">${escHtml(l)}</span>
         </div>
       `).join('') + (lines.length > 20 ? `<div class="preview-line"><span class="preview-num">…</span><span class="preview-text">${lines.length - 20} more lines</span></div>` : '');
+
+      // Update pronunciation section
+      if (pronSection) pronSection.style.display = '';
+      if (pronInputs) {
+        // Preserve existing values
+        const existing = {};
+        $$('.pron-line-input', pronInputs).forEach(inp => {
+          existing[inp.dataset.idx] = inp.value;
+        });
+        pronInputs.innerHTML = lines.slice(0, 20).map((l, i) => `
+          <div class="pronunciation-input-row">
+            <span class="preview-num">${i + 1}</span>
+            <input class="pron-line-input" type="text" data-idx="${i}"
+              placeholder="${escHtml(l.substring(0, 30))}…"
+              value="${escHtml(existing[i] || '')}"
+              autocomplete="off" />
+          </div>
+        `).join('');
+      }
     } else {
       previewSection.style.display = 'none';
+      if (pronSection) pronSection.style.display = 'none';
     }
 
     if (saveBtn) saveBtn.disabled = !($('#add-title')?.value.trim()) || lines.length === 0;
@@ -696,7 +774,19 @@ function renderAdd() {
   window.saveText = async () => {
     const title = $('#add-title')?.value.trim();
     const textVal = $('#add-text')?.value || '';
-    const lines = textVal.split('\n').filter(l => l.trim()).map(l => ({ text: l.trim(), translation: '' }));
+    const rawLines = textVal.split('\n').filter(l => l.trim());
+
+    // Gather pronunciations
+    const pronValues = {};
+    $$('.pron-line-input').forEach(inp => {
+      pronValues[parseInt(inp.dataset.idx)] = inp.value.trim();
+    });
+
+    const lines = rawLines.map((l, i) => ({
+      text: l.trim(),
+      translation: '',
+      pronunciation: pronValues[i] || ''
+    }));
 
     if (!title || lines.length === 0) {
       showToast('Please add a title and text', 'error');
@@ -737,9 +827,19 @@ async function renderTextDetail(id) {
           <span class="line-num">${idx + 1}</span>
           <div class="line-content">
             <div class="line-text">${escHtml(line.text)}</div>
+            ${line.pronunciation ? `<div class="line-pronunciation">${escHtml(line.pronunciation)}</div>` : ''}
             ${line.translation ? `<div class="line-translation">${escHtml(line.translation)}</div>` : ''}
-            <div id="translation-area-${line.id}">
-              ${!line.translation ? `<span class="add-translation-link" onclick="showTranslationInput('${line.id}')">+ add translation</span>` : `<span class="add-translation-link" onclick="showTranslationInput('${line.id}')">edit translation</span>`}
+            <div class="line-actions-row">
+              <div id="pronunciation-area-${line.id}">
+                ${!line.pronunciation
+                  ? `<span class="add-translation-link" onclick="showPronunciationInput('${line.id}')">+ add pronunciation</span>`
+                  : `<span class="add-translation-link" onclick="showPronunciationInput('${line.id}')">edit pronunciation</span>`}
+              </div>
+              <div id="translation-area-${line.id}">
+                ${!line.translation
+                  ? `<span class="add-translation-link" onclick="showTranslationInput('${line.id}')">+ add translation</span>`
+                  : `<span class="add-translation-link" onclick="showTranslationInput('${line.id}')">edit translation</span>`}
+              </div>
             </div>
           </div>
           <div class="mastery-dot ${ml}" title="${ml}"></div>
@@ -752,7 +852,8 @@ async function renderTextDetail(id) {
       { id: 2, icon: '✎', label: 'Fill' },
       { id: 3, icon: 'Aa', label: '1st Letter' },
       { id: 4, icon: '💭', label: 'Meaning' },
-      { id: 5, icon: '◎', label: 'Recite' }
+      { id: 5, icon: '◎', label: 'Recite' },
+      { id: 6, icon: '🗣', label: 'Pronounce' }
     ];
 
     let selectedMode = 1;
@@ -808,7 +909,8 @@ async function renderTextDetail(id) {
         Begin Practice
       </button>
 
-      <button class="delete-text-btn" onclick="deleteText('${text.id}', '${escHtml(text.title).replace(/'/g, "\\'")}')">Delete Text</button>
+      <button class="delete-text-btn" onclick="deleteText('${text.id}', '${escHtml(text.title).replace(/'/g, "\\'")}')">\n        Delete Text
+      </button>
       <div style="height: 24px"></div>
     `;
 
@@ -825,6 +927,53 @@ async function renderTextDetail(id) {
       $('#begin-practice-btn').onclick = () => beginPractice(text.id, modeId);
     };
 
+    // ---- Pronunciation input ----
+    window.showPronunciationInput = (lineId) => {
+      const area = $(`#pronunciation-area-${lineId}`);
+      if (!area) return;
+      const line = text.lines.find(l => l.id === lineId);
+      area.innerHTML = `
+        <div class="translation-input-wrap">
+          <input class="pronunciation-edit-input" type="text" placeholder="Phonetic pronunciation…"
+            value="${escHtml(line?.pronunciation || '')}"
+            id="pron-input-${lineId}" />
+          <button class="translation-save-btn" onclick="savePronunciation('${lineId}')">Save</button>
+        </div>
+      `;
+      $(`#pron-input-${lineId}`)?.focus();
+    };
+
+    window.savePronunciation = async (lineId) => {
+      const val = $(`#pron-input-${lineId}`)?.value || '';
+      try {
+        await api('PUT', 'updateLine', { id: lineId, pronunciation: val });
+        const line = text.lines.find(l => l.id === lineId);
+        if (line) line.pronunciation = val;
+        const area = $(`#pronunciation-area-${lineId}`);
+        const lineItem = $(`#line-item-${lineId}`);
+        if (lineItem) {
+          const existing = lineItem.querySelector('.line-pronunciation');
+          if (existing) {
+            if (val) existing.textContent = val;
+            else existing.remove();
+          } else if (val) {
+            const lineText = lineItem.querySelector('.line-text');
+            const pronEl = document.createElement('div');
+            pronEl.className = 'line-pronunciation';
+            pronEl.textContent = val;
+            lineText.insertAdjacentElement('afterend', pronEl);
+          }
+        }
+        if (area) area.innerHTML = val
+          ? `<span class="add-translation-link" onclick="showPronunciationInput('${lineId}')">edit pronunciation</span>`
+          : `<span class="add-translation-link" onclick="showPronunciationInput('${lineId}')">+ add pronunciation</span>`;
+        showToast('Pronunciation saved', 'success');
+      } catch (e) {
+        showToast('Failed to save', 'error');
+      }
+    };
+
+    // ---- Translation input ----
     window.showTranslationInput = (lineId) => {
       const area = $(`#translation-area-${lineId}`);
       if (!area) return;
@@ -844,24 +993,28 @@ async function renderTextDetail(id) {
       const val = $(`#trans-input-${lineId}`)?.value || '';
       try {
         await api('PUT', 'updateLine', { id: lineId, translation: val });
-        // Refresh the line display
         const line = text.lines.find(l => l.id === lineId);
         if (line) line.translation = val;
         const area = $(`#translation-area-${lineId}`);
         const lineItem = $(`#line-item-${lineId}`);
         if (lineItem) {
-          // Update translation display
           const existingTrans = lineItem.querySelector('.line-translation');
-          if (existingTrans) existingTrans.textContent = val;
-          else if (val) {
+          if (existingTrans) {
+            if (val) existingTrans.textContent = val;
+            else existingTrans.remove();
+          } else if (val) {
+            // Insert after pronunciation or line-text
+            const pronEl = lineItem.querySelector('.line-pronunciation');
             const lineText = lineItem.querySelector('.line-text');
             const tranEl = document.createElement('div');
             tranEl.className = 'line-translation';
             tranEl.textContent = val;
-            lineText.insertAdjacentElement('afterend', tranEl);
+            (pronEl || lineText).insertAdjacentElement('afterend', tranEl);
           }
         }
-        if (area) area.innerHTML = `<span class="add-translation-link" onclick="showTranslationInput('${lineId}')">edit translation</span>`;
+        if (area) area.innerHTML = val
+          ? `<span class="add-translation-link" onclick="showTranslationInput('${lineId}')">edit translation</span>`
+          : `<span class="add-translation-link" onclick="showTranslationInput('${lineId}')">+ add translation</span>`;
         showToast('Translation saved', 'success');
       } catch (e) {
         showToast('Failed to save', 'error');
@@ -905,6 +1058,7 @@ async function renderPractice(textId, modeStr) {
       case 3: renderMode3(text); break;
       case 4: renderMode4(text); break;
       case 5: renderMode5(text); break;
+      case 6: renderMode6(text); break;
       default: renderMode1(text);
     }
   } catch (e) {
@@ -1231,12 +1385,17 @@ function renderMode3(text) {
 }
 
 // ============================================================
-// MODE 4 — MEANING RECALL
+// MODE 4 — MEANING RECALL (enhanced with pronunciation)
 // ============================================================
 
 function renderMode4(text) {
-  const lines = text.lines.filter(l => l.text.trim() && l.translation && l.translation.trim());
-  const allLines = text.lines.filter(l => l.text.trim());
+  // Include lines with translation OR pronunciation (or both)
+  const lines = text.lines.filter(l => {
+    if (!l.text.trim()) return false;
+    const hasTrans = l.translation && l.translation.trim();
+    const hasPron = l.pronunciation && l.pronunciation.trim();
+    return hasTrans || hasPron;
+  });
 
   if (lines.length === 0) {
     const html = `
@@ -1244,8 +1403,8 @@ function renderMode4(text) {
       <div class="practice-screen">
         <div class="mode4-content">
           <div class="mode4-no-translations">
-            No translations found.<br><br>
-            Add translations to your lines in the text detail view to use this mode.
+            No translations or pronunciations found.<br><br>
+            Add translations or pronunciations to your lines in the text detail view to use this mode.
           </div>
           <button class="mode4-compare-btn" onclick="navigate('#text/${text.id}')">
             Add Translations
@@ -1269,6 +1428,21 @@ function renderMode4(text) {
 
     const line = lines[currentIdx];
     const pct = Math.round((currentIdx / lines.length) * 100);
+    const hasTrans = line.translation && line.translation.trim();
+    const hasPron = line.pronunciation && line.pronunciation.trim();
+
+    // Build the "prompt" display
+    let promptHtml = '';
+    if (hasTrans) {
+      promptHtml += `<div class="mode4-meaning-display">${escHtml(line.translation)}</div>`;
+    }
+    if (hasPron) {
+      promptHtml += `<div class="mode4-pronunciation-hint">${escHtml(line.pronunciation)}</div>`;
+    }
+    if (!hasTrans && hasPron) {
+      // Only pronunciation: show it as the main prompt
+      promptHtml = `<div class="mode4-meaning-display mode4-pron-only">${escHtml(line.pronunciation)}</div>`;
+    }
 
     const html = `
       ${practiceHeader(text, 'Meaning')}
@@ -1278,7 +1452,7 @@ function renderMode4(text) {
       <div class="practice-screen">
         <div class="mode4-content">
           <div class="mode4-line-counter">${currentIdx + 1} / ${lines.length}</div>
-          <div class="mode4-meaning-display">${escHtml(line.translation)}</div>
+          ${promptHtml}
           <textarea id="mode4-input" class="mode4-input" rows="2"
             placeholder="Type the original line from memory…" autocorrect="off" autocapitalize="off"></textarea>
           <button class="mode4-compare-btn" onclick="mode4Compare()">Compare</button>
@@ -1391,6 +1565,89 @@ function renderMode5(text) {
     await api('POST', 'recordPractice', { textId: text.id, linesPracticed: text.lines.length }).catch(() => {});
     navigate(`#complete/${text.id}`);
   };
+}
+
+// ============================================================
+// MODE 6 — PRONUNCIATION PRACTICE
+// ============================================================
+
+function renderMode6(text) {
+  // Only lines with pronunciation
+  const lines = text.lines.filter(l => l.text.trim() && l.pronunciation && l.pronunciation.trim());
+
+  if (lines.length === 0) {
+    const html = `
+      ${practiceHeader(text, 'Pronounce')}
+      <div class="practice-screen">
+        <div class="mode6-content">
+          <div class="mode4-no-translations">
+            No pronunciations found.<br><br>
+            Add pronunciations to your lines in the text detail view to use this mode.
+          </div>
+          <button class="mode4-compare-btn" onclick="navigate('#text/${text.id}')">
+            Add Pronunciations
+          </button>
+        </div>
+      </div>
+    `;
+    setScreen(html);
+    return;
+  }
+
+  let currentIdx = 0;
+  let graded = false;
+
+  function renderLine() {
+    if (currentIdx >= lines.length) {
+      finishMode6();
+      return;
+    }
+
+    graded = false;
+    const line = lines[currentIdx];
+    const pct = Math.round((currentIdx / lines.length) * 100);
+
+    const html = `
+      ${practiceHeader(text, 'Pronounce')}
+      <div class="practice-progress-bar">
+        <div class="practice-progress-fill" style="width:${pct}%"></div>
+      </div>
+      <div class="practice-screen">
+        <div class="mode6-content">
+          <div class="mode6-line-counter">${currentIdx + 1} / ${lines.length}</div>
+          <div class="mode6-original">${escHtml(line.text)}</div>
+          <div class="mode6-pronunciation">${escHtml(line.pronunciation)}</div>
+          ${line.translation ? `<div class="mode6-translation">${escHtml(line.translation)}</div>` : ''}
+          <div class="mode6-instruction">Say it aloud, then grade yourself</div>
+          <div class="mode6-grade-row" id="mode6-grades">
+            <button class="mode4-grade-btn grade-forgot" onclick="mode6Grade(0)">Forgot</button>
+            <button class="mode4-grade-btn grade-hard" onclick="mode6Grade(2)">Hard</button>
+            <button class="mode4-grade-btn grade-good" onclick="mode6Grade(3)">Good</button>
+            <button class="mode4-grade-btn grade-perfect" onclick="mode6Grade(5)">Perfect</button>
+          </div>
+        </div>
+      </div>
+    `;
+    setScreen(html);
+  }
+
+  function finishMode6() {
+    updateLinesSM2(lines, 3);
+    api('POST', 'recordPractice', { textId: text.id, linesPracticed: lines.length }).catch(() => {});
+    navigate(`#complete/${text.id}`);
+  }
+
+  window.mode6Grade = async (quality) => {
+    if (graded) return;
+    graded = true;
+    const line = lines[currentIdx];
+    const result = sm2(quality, line.repetitions || 0, line.interval || 0, line.easeFactor || 2.5);
+    await api('PUT', 'updateLine', { id: line.id, ...result }).catch(() => {});
+    currentIdx++;
+    renderLine();
+  };
+
+  renderLine();
 }
 
 // ============================================================
@@ -1545,7 +1802,7 @@ function renderGuide() {
       items: [
         'Open this app in your phone\'s browser — it works on any device.',
         '<strong>Save to Home Screen (iPhone):</strong> In Safari, tap the Share button (square with arrow), then "Add to Home Screen." It\'ll look and feel like a real app.',
-        'Recite helps you memorize any text using proven spaced repetition. Paste your text, practice with 5 different modes, and the app tracks your progress automatically.',
+        'Recite helps you memorize any text using proven spaced repetition. Paste your text, practice with 6 different modes, and the app tracks your progress automatically.',
         '<strong>Your data is stored locally</strong> in your browser\'s IndexedDB — no account needed, and it works offline.'
       ]
     },
@@ -1557,18 +1814,20 @@ function renderGuide() {
         'Enter a title for your text.',
         'Choose a category: Prayer, Speech, Song, Poem, Script, or Other.',
         'Paste or type your text — each line becomes a memorizable unit.',
+        'Optionally expand "Add Pronunciations" to add phonetic guides per line.',
         'Preview your numbered lines, then tap <strong>Save Text</strong>.'
       ]
     },
     {
-      title: 'The 5 Practice Modes',
+      title: 'The 6 Practice Modes',
       icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>',
       items: [
         '<strong>Progressive Hiding</strong> — See the full text, then tap "Hide More" to blank out words one by one. Try to recall them. Long-press to peek.',
         '<strong>Fill in the Blank</strong> — One line at a time with a missing word. Type it in — green flash means correct, red means try again.',
         '<strong>First Letter</strong> — Each word is shown as just its first letter. Reconstruct the full text from memory. Use "Hint" if you get stuck.',
-        '<strong>Meaning Recall</strong> — See a translation or meaning, then type the original line. Perfect for foreign language texts. (Add translations on the text detail screen first.)',
-        '<strong>Full Recitation</strong> — A blank screen with just the title and a timer. Recite from memory, tap "Reveal" to check, then grade yourself: Forgot, Hard, Good, or Perfect.'
+        '<strong>Meaning Recall</strong> — See a translation or meaning (and pronunciation hint if available), then type the original line. Perfect for foreign language texts.',
+        '<strong>Full Recitation</strong> — A blank screen with just the title and a timer. Recite from memory, tap "Reveal" to check, then grade yourself.',
+        '<strong>Pronounce</strong> — See the original text and its phonetic pronunciation. Say it aloud, then self-grade: Forgot, Hard, Good, or Perfect.'
       ]
     },
     {
@@ -1599,6 +1858,7 @@ function renderGuide() {
         'Start with short texts (5–10 lines) and work up.',
         'Practice daily, even if just for 5 minutes.',
         'Use <strong>Progressive Hiding</strong> first to get familiar, then switch to harder modes.',
+        'Add pronunciations for foreign language texts to unlock <strong>Pronounce</strong> mode.',
         'Add translations for foreign language texts to unlock <strong>Meaning Recall</strong> mode.',
         '<strong>Full Recitation</strong> is the ultimate test — use it when you feel ready.',
         'Trust the spaced repetition schedule — it\'s scientifically optimized for long-term retention.'
@@ -1771,7 +2031,10 @@ function shuffleArray(arr) {
 // ============================================================
 
 window.addEventListener('hashchange', router);
-window.addEventListener('DOMContentLoaded', router);
+window.addEventListener('DOMContentLoaded', async () => {
+  await maybePreloadSevenLinePrayer();
+  router();
+});
 
 // Handle back button correctly when hash is home
 window.addEventListener('popstate', () => {
